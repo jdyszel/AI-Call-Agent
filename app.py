@@ -1,4 +1,4 @@
-iimport openai
+import openai
 import requests
 import time
 from io import BytesIO
@@ -7,7 +7,9 @@ from flask import Flask, request, Response
 from tempfile import NamedTemporaryFile
 import traceback
 
+# Load API key from environment
 openai.api_key = os.getenv("OPENAI_API_KEY")
+
 app = Flask(__name__)
 
 # Simple in-memory conversation tracker (reset every call)
@@ -103,12 +105,12 @@ def handle_response():
 
     if "thank you, that's all i need today" in next_line.lower():
         conversation_complete = True
-        twiml = f'<Response><Say>{next_line}</Say><Hangup/></Response>'
+        twiml = '<Response><Say>' + next_line + '</Say><Hangup/></Response>'
     else:
         twiml = (
-            f'<Response><Say>{next_line}</Say>'
-            f'<Record maxLength="10" action="/handle-response?q={question_id+1}" method="POST" playBeep="false" />'
-            '</Response>'
+            '<Response><Say>' + next_line + '</Say>'
+            + '<Record maxLength="10" action="/handle-response?q=' + str(question_id+1) + '" method="POST" playBeep="false" />'
+            + '</Response>'
         )
     return Response(twiml, mimetype='text/xml')
 
