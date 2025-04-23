@@ -7,8 +7,8 @@ from flask import Flask, request, Response
 from tempfile import NamedTemporaryFile
 import traceback
 
-# Initialize OpenAI client
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Initialize OpenAI client using environment variable OPENAI_API_KEY
+client = OpenAI()
 app = Flask(__name__)
 
 # In-memory conversation state
@@ -18,7 +18,7 @@ conversation_complete = False
 
 @app.route("/voice", methods=["POST"])
 def voice():
-    caller_number = request.form.get("From", "an unknown number")
+    # Start conversation by asking for full name
     conversation_log.clear()
     response = (
         '<Response>'
@@ -39,20 +39,18 @@ def handle_response():
         )
 
     qid = int(request.args.get("q", 0))
-    rpt_url = request.form.get("RecordingUrl") + ".mp3"
-    print("Recording URL:", rpt_url)
+    recording_url = request.form.get("RecordingUrl") + ".mp3"
+    print("Recording URL:", recording_url)
 
     time.sleep(3)
-    transcript = ""
+
+    # Transcribe audio
     try:
-        # Download audio
-        data = requests.get(rpt_url).content
-        # Write to temp file
-        with NamedTemporaryFile(suffix=".mp3", delete=False) as f:
-            f.write(data)
-            f.flush()
-        # Transcribe using new API
-        with open(f.name, "rb") as audio_file:
+        audio_data = requests.get(recording_url).content
+        with NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+            tmp.write(audio_data)
+            tmp.flush()
+        with open(tmp.name, "rb") as audio_file:
             resp = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=audio_file
@@ -67,37 +65,40 @@ def handle_response():
         )
 
     print("Transcript:", transcript)
-
+    # Save transcript and extract first name
     if qid == 0:
-        parts = transcript.split()
-        first_name = parts[1] if parts and parts[0].lower() in ["my","i'm","i"] and len(parts)>1 else (parts[0] if parts else "there")
+        parts = transcript.strip().split()
+        first_name = parts[1] if parts and parts[0].lower() in ["my","i'm","i"] and len(parts) > 1 else (parts[0] if parts else "there")
         conversation_log.append(f"Full name: {transcript}")
     else:
         conversation_log.append(f"{first_name}: {transcript}")
 
-    # GPT response
+    # Generate next question or closing
     try:
         system_prompt = (
-            f"You are an interviewer; do not say you are AI. Call them {first_name}."
-            f" Caller number: {request.form.get('From')}.")
+            f"You are a friendly interviewer. Address the caller by their first name, {first_name}."
+            " Ask one question at a time and never mention you're an AI."
+            " When done, say 'Thank you, that's all I need today.' and hang up."
+        )
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": "\n".join(conversation_log)}
         ]
-        gresp = client.chat.completions.create(
+        chat = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=messages
         )
-        next_line = gresp.choices[0].message.content.strip()
+        next_line = chat.choices[0].message.content.strip()
     except Exception as e:
         traceback.print_exc()
         print("Error during GPT analysis:", e)
         return Response(
-            '<Response><Say>Sorry, trouble continuing. Try again later.</Say><Hangup/></Response>',
+            '<Response><Say>Sorry, there was an issue continuing the interview. Please try again later.</Say><Hangup/></Response>',
             mimetype='text/xml'
         )
 
-    print("Next:", next_line)
+    print("Next Line:", next_line)
+    # Build TwiML
     if "thank you, that's all i need today" in next_line.lower():
         conversation_complete = True
         twiml = f'<Response><Say>{next_line}</Say><Hangup/></Response>'
