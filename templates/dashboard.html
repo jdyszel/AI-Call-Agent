@@ -35,20 +35,6 @@
         </div>
         {% endif %}
         
-        {% if current_user.has_permission('analytics') %}
-        <div class="col-md-4 mb-4">
-            <div class="card h-100">
-                <div class="card-header">
-                    <h5 class="card-title">Analytics</h5>
-                </div>
-                <div class="card-body">
-                    <p class="card-text">View performance metrics and analytics for AI tools.</p>
-                    <a href="{{ url_for('analytics') }}" class="btn btn-primary">View Analytics</a>
-                </div>
-            </div>
-        </div>
-        {% endif %}
-        
         {% if current_user.has_permission('manage_users') %}
         <div class="col-md-4 mb-4">
             <div class="card h-100">
@@ -58,20 +44,6 @@
                 <div class="card-body">
                     <p class="card-text">Manage user accounts and permissions.</p>
                     <a href="{{ url_for('manage_users') }}" class="btn btn-primary">Manage Users</a>
-                </div>
-            </div>
-        </div>
-        {% endif %}
-        
-        {% if current_user.has_permission('settings') %}
-        <div class="col-md-4 mb-4">
-            <div class="card h-100">
-                <div class="card-header">
-                    <h5 class="card-title">Settings</h5>
-                </div>
-                <div class="card-body">
-                    <p class="card-text">Configure AI tool settings and preferences.</p>
-                    <a href="{{ url_for('settings') }}" class="btn btn-primary">Manage Settings</a>
                 </div>
             </div>
         </div>
