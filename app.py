@@ -3,31 +3,119 @@ import requests
 import time
 from io import BytesIO
 import os
-from flask import Flask, request, Response
+import shutil
+from flask import Flask, request, Response, session
 from tempfile import NamedTemporaryFile
 import traceback
+from contextlib import contextmanager
+import json
+from datetime import datetime
 
 # Initialize OpenAI client using environment variable from Render
-api_key = os.getenv('OPENAI_API_KEY')
+api_key = os.getenv('Open_AI_Key')
 if not api_key:
-    raise ValueError("OPENAI_API_KEY environment variable is not set. Please check your Render environment configuration.")
+    raise ValueError("Open_AI_Key environment variable is not set. Please check your Render environment configuration.")
 
 client = OpenAI(api_key=api_key)
 app = Flask(__name__)
+app.secret_key = os.getenv('FLASK_SECRET_KEY', os.urandom(24))
 
-# In-memory conversation state
-conversation_log = []
-first_name = ""
-conversation_complete = False
+# Conversation storage configuration
+CONVERSATION_STORAGE_DIR = "conversations"
+os.makedirs(CONVERSATION_STORAGE_DIR, exist_ok=True)
 
 # TTS Configuration
 TTS_CONFIG = {
-    "voice": "Polly.Joanna-Neural",  # Using neural voice for more natural sound
+    "voice": "Polly.Joanna-Neural",
     "language": "en-US",
-    "speech_rate": "medium",  # Can be 'slow', 'medium', or 'fast'
-    "pitch": "default",  # Can be 'x-low', 'low', 'default', 'high', 'x-high'
-    "volume": "default"  # Can be 'silent', 'x-soft', 'soft', 'medium', 'loud', 'x-loud'
+    "speech_rate": "medium",
+    "pitch": "default",
+    "volume": "default"
 }
+
+def save_conversation(call_sid, conversation_data):
+    """Save conversation data to a file for future reference."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{CONVERSATION_STORAGE_DIR}/{call_sid}_{timestamp}.json"
+    with open(filename, 'w') as f:
+        json.dump(conversation_data, f, indent=2)
+
+def load_conversation(call_sid):
+    """Load conversation data if it exists."""
+    try:
+        # Find the most recent conversation file for this call_sid
+        files = [f for f in os.listdir(CONVERSATION_STORAGE_DIR) if f.startswith(call_sid)]
+        if not files:
+            return None
+        latest_file = max(files)
+        with open(os.path.join(CONVERSATION_STORAGE_DIR, latest_file), 'r') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+@contextmanager
+def safe_temp_file(suffix=None):
+    """Safely create and cleanup a temporary file."""
+    temp_file = NamedTemporaryFile(suffix=suffix, delete=False)
+    try:
+        yield temp_file
+    finally:
+        temp_file.close()
+        try:
+            os.unlink(temp_file.name)
+        except OSError:
+            pass
+
+def extract_name_and_preference(transcript):
+    """Extract name and preferred name from transcript with improved logic."""
+    if not transcript:
+        return "there", None
+    
+    # Clean and split the transcript
+    words = transcript.strip().lower().split()
+    if not words:
+        return "there", None
+    
+    # Common introduction patterns with their variations
+    intro_patterns = {
+        "my name is": 3,
+        "i'm": 1,
+        "this is": 2,
+        "i am": 2,
+        "hello i'm": 2,
+        "hi i'm": 2,
+        "you can call me": 3,
+        "please call me": 2,
+        "everyone calls me": 2,
+        "i go by": 2,
+        "i prefer to be called": 3,
+        "i like to be called": 3,
+        "my friends call me": 3,
+        "my nickname is": 2,
+        "i'm known as": 2
+    }
+    
+    # Check for introduction patterns
+    transcript_lower = transcript.lower()
+    for pattern, skip in intro_patterns.items():
+        if pattern in transcript_lower:
+            # Get the part after the pattern
+            parts = transcript_lower.split(pattern, 1)
+            if len(parts) > 1:
+                name_parts = parts[1].strip().split()
+                if name_parts:
+                    # Check if there's a preferred name mentioned
+                    preferred_name = None
+                    if "but" in name_parts or "however" in name_parts:
+                        for i, word in enumerate(name_parts):
+                            if word in ["but", "however"] and i + 1 < len(name_parts):
+                                preferred_name = name_parts[i + 1]
+                                break
+                    
+                    return name_parts[0], preferred_name
+    
+    # If no pattern matches, take the first word as name
+    return words[0], None
 
 def generate_twiml_response(text, record_next=False, qid=0):
     """Generate TwiML response with enhanced TTS configuration"""
@@ -47,8 +135,23 @@ def generate_twiml_response(text, record_next=False, qid=0):
 
 @app.route("/voice", methods=["POST"])
 def voice():
-    # Start conversation by asking for full name
-    conversation_log.clear()
+    # Get call SID for conversation tracking
+    call_sid = request.form.get('CallSid', 'unknown')
+    
+    # Initialize session data
+    session['call_sid'] = call_sid
+    session['conversation_log'] = []
+    session['first_name'] = ""
+    session['preferred_name'] = None
+    session['conversation_complete'] = False
+    
+    # Try to load previous conversation if it exists
+    previous_conversation = load_conversation(call_sid)
+    if previous_conversation:
+        session['conversation_log'] = previous_conversation.get('conversation_log', [])
+        session['first_name'] = previous_conversation.get('first_name', "")
+        session['preferred_name'] = previous_conversation.get('preferred_name')
+    
     response = generate_twiml_response(
         "Hi! Thanks for calling. I'd like to get to know you better. Can I please have your full name?",
         record_next=True,
@@ -58,9 +161,9 @@ def voice():
 
 @app.route("/handle-response", methods=["POST"])
 def handle_response():
-    global conversation_log, first_name, conversation_complete
-
-    if conversation_complete:
+    call_sid = session.get('call_sid', 'unknown')
+    
+    if session.get('conversation_complete', False):
         return Response(
             generate_twiml_response("The call is complete. Thank you for your time."),
             mimetype='text/xml'
@@ -78,54 +181,88 @@ def handle_response():
     recording_url += ".mp3"
     print("Recording URL:", recording_url)
 
-    # Add a small delay to ensure the recording is available
-    time.sleep(2)
-
-    # Transcribe audio with improved error handling
-    try:
-        response = requests.get(recording_url, timeout=10)
-        response.raise_for_status()
-        audio_data = response.content
-        
-        with NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-            tmp.write(audio_data)
-            tmp.flush()
+    # Transcribe audio with improved error handling and longer delay
+    max_retries = 3
+    retry_delay = 5  # Increased initial delay
+    last_error = None
+    
+    for attempt in range(max_retries):
+        try:
+            # Add delay before each attempt
+            time.sleep(retry_delay)
             
-        with open(tmp.name, "rb") as audio_file:
-            resp = client.audio.transcriptions.create(
-                model="whisper-1",
-                file=audio_file
+            response = requests.get(recording_url, timeout=15)  # Increased timeout
+            response.raise_for_status()
+            
+            with safe_temp_file(suffix=".mp3") as tmp:
+                tmp.write(response.content)
+                tmp.flush()
+                
+                with open(tmp.name, "rb") as audio_file:
+                    resp = client.audio.transcriptions.create(
+                        model="whisper-1",
+                        file=audio_file
+                    )
+                transcript = resp.text
+                break
+        except requests.exceptions.RequestException as e:
+            last_error = e
+            if attempt < max_retries - 1:
+                retry_delay *= 2  # Exponential backoff
+                continue
+            print("Error fetching recording:", e)
+            return Response(
+                generate_twiml_response("I'm having trouble hearing you. Could you please speak a bit louder and try again?"),
+                mimetype='text/xml'
             )
-        transcript = resp.text
-    except requests.exceptions.RequestException as e:
-        print("Error fetching recording:", e)
+        except Exception as e:
+            traceback.print_exc()
+            print("Error during transcription:", e)
+            return Response(
+                generate_twiml_response("I'm sorry, there was a technical issue understanding your answer. Let's try again."),
+                mimetype='text/xml'
+            )
+    else:
+        print("All retries failed:", last_error)
         return Response(
-            generate_twiml_response("I'm having trouble hearing you. Could you please speak a bit louder?"),
-            mimetype='text/xml'
-        )
-    except Exception as e:
-        traceback.print_exc()
-        print("Error during transcription:", e)
-        return Response(
-            generate_twiml_response("I'm sorry, there was a technical issue understanding your answer. Let's try again."),
+            generate_twiml_response("I'm having technical difficulties. Please try again in a moment."),
             mimetype='text/xml'
         )
 
     print("Transcript:", transcript)
-    # Save transcript and extract first name
+    
+    # Update session data
+    conversation_log = session.get('conversation_log', [])
+    
     if qid == 0:
-        parts = transcript.strip().split()
-        first_name = parts[1] if parts and parts[0].lower() in ["my","i'm","i"] and len(parts) > 1 else (parts[0] if parts else "there")
+        first_name, preferred_name = extract_name_and_preference(transcript)
+        session['first_name'] = first_name
+        if preferred_name:
+            session['preferred_name'] = preferred_name
         conversation_log.append(f"Full name: {transcript}")
     else:
+        first_name = session.get('preferred_name') or session.get('first_name', 'there')
         conversation_log.append(f"{first_name}: {transcript}")
+    
+    session['conversation_log'] = conversation_log
+    
+    # Save conversation state
+    conversation_data = {
+        'call_sid': call_sid,
+        'conversation_log': conversation_log,
+        'first_name': session.get('first_name'),
+        'preferred_name': session.get('preferred_name'),
+        'timestamp': datetime.now().isoformat()
+    }
+    save_conversation(call_sid, conversation_data)
 
     # Generate next question or closing with improved error handling
     try:
         system_prompt = (
-            f"You are a friendly interviewer. Address the caller by their first name, {first_name}."
-            " Ask one question at a time and never mention you're an AI."
-            " When done, say 'Thank you, that's all I need today.' and hang up."
+            f"You are a friendly interviewer. Address the caller by their preferred name ({session.get('preferred_name')}) "
+            f"if they have one, otherwise use their first name ({session.get('first_name')}). "
+            "Ask one question at a time and never mention you're an AI. "
+            "When done, say 'Thank you, that's all I need today.' and hang up."
         )
         messages = [
             {"role": "system", "content": system_prompt},
@@ -134,7 +271,7 @@ def handle_response():
         chat = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=messages,
-            temperature=0.7  # Add some variability to responses
+            temperature=0.7
         )
         next_line = chat.choices[0].message.content.strip()
     except Exception as e:
@@ -148,7 +285,7 @@ def handle_response():
     print("Next Line:", next_line)
     
     if "thank you, that's all i need today" in next_line.lower():
-        conversation_complete = True
+        session['conversation_complete'] = True
         return Response(
             generate_twiml_response(next_line),
             mimetype='text/xml'
