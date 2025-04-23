@@ -9,7 +9,6 @@ import traceback
 
 # Load API key from environment
 openai.api_key = os.getenv("OPENAI_API_KEY")
-
 app = Flask(__name__)
 
 # Simple in-memory conversation tracker (reset every call)
@@ -47,12 +46,14 @@ def handle_response():
     time.sleep(3)
 
     try:
+        # Step 1: Download audio
         audio_data = requests.get(recording_url).content
-        with NamedTemporaryFile(suffix=".wav", delete=False) as temp_audio:
+        with NamedTemporaryFile(suffix=".mp3", delete=False) as temp_audio:
             temp_audio.write(audio_data)
             temp_audio.flush()
-            with open(temp_audio.name, "rb") as audio_file:
-                transcript_response = openai.Audio.transcribe("whisper-1", audio_file)
+        # Step 2: Transcribe using updated OpenAI API
+        with open(temp_audio.name, "rb") as audio_file:
+            transcript_response = openai.Audio.transcribe("whisper-1", audio_file)
         transcript = transcript_response.get("text", "")
     except Exception as e:
         traceback.print_exc()
@@ -92,7 +93,7 @@ def handle_response():
                 {"role": "user", "content": "\n".join(conversation_log)}
             ]
         )
-        next_line = gpt_response["choices"][0]["message"]["content"].strip()
+        next_line = gpt_response.choices[0].message.content.strip()
     except Exception as e:
         traceback.print_exc()
         print("Error during GPT analysis:", str(e))
