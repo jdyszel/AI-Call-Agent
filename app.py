@@ -12,9 +12,9 @@ import json
 from datetime import datetime
 
 # Initialize OpenAI client using environment variable from Render
-api_key = os.getenv('Open_AI_Key')
+api_key = os.getenv('Render')
 if not api_key:
-    raise ValueError("Open_AI_Key environment variable is not set. Please check your Render environment configuration.")
+    raise ValueError("Render environment variable (OpenAI API key) is not set. Please check your Render environment configuration.")
 
 client = OpenAI(api_key=api_key)
 app = Flask(__name__)
