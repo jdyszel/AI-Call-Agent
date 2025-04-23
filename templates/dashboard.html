@@ -7,6 +7,7 @@
     <h1 class="text-center mb-4">AI Tools Dashboard</h1>
     
     <div class="row">
+        {% if current_user.has_permission('sheet_search') %}
         <div class="col-md-4 mb-4">
             <div class="card h-100">
                 <div class="card-header">
@@ -18,7 +19,9 @@
                 </div>
             </div>
         </div>
+        {% endif %}
         
+        {% if current_user.has_permission('analytics') %}
         <div class="col-md-4 mb-4">
             <div class="card h-100">
                 <div class="card-header">
@@ -30,7 +33,23 @@
                 </div>
             </div>
         </div>
+        {% endif %}
         
+        {% if current_user.has_permission('manage_users') %}
+        <div class="col-md-4 mb-4">
+            <div class="card h-100">
+                <div class="card-header">
+                    <h5 class="card-title">User Management</h5>
+                </div>
+                <div class="card-body">
+                    <p class="card-text">Manage user accounts and permissions.</p>
+                    <a href="{{ url_for('manage_users') }}" class="btn btn-primary">Manage Users</a>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+        
+        {% if current_user.has_permission('settings') %}
         <div class="col-md-4 mb-4">
             <div class="card h-100">
                 <div class="card-header">
@@ -42,6 +61,7 @@
                 </div>
             </div>
         </div>
+        {% endif %}
     </div>
 </div>
 {% endblock %} 
