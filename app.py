@@ -27,7 +27,8 @@ if not api_key:
 # Initialize Flask and its extensions
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', os.urandom(24))
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
+# Use in-memory SQLite for Render deployment
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Initialize extensions
@@ -35,6 +36,40 @@ db = SQLAlchemy(app)
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
+
+# Create database and default roles/users if they don't exist
+with app.app_context():
+    db.create_all()
+    
+    # Create default roles if they don't exist
+    roles = {
+        'admin': 'Full access to all features and user management',
+        'manager': 'Access to analytics and basic management features',
+        'user': 'Basic access to core features'
+    }
+    
+    for role_name, description in roles.items():
+        role = Role.query.filter_by(name=role_name).first()
+        if not role:
+            role = Role(name=role_name, description=description)
+            if role_name == 'admin':
+                role.permissions = 'admin,manage_users,sheet_search,questionnaire_bot,analytics'
+            elif role_name == 'manager':
+                role.permissions = 'sheet_search,questionnaire_bot,analytics'
+            else:
+                role.permissions = 'sheet_search,questionnaire_bot'
+            db.session.add(role)
+    
+    # Create admin user if it doesn't exist
+    admin_role = Role.query.filter_by(name='admin').first()
+    if admin_role:
+        admin = User.query.filter_by(username='admin').first()
+        if not admin:
+            admin = User(username='admin', role=admin_role)
+            admin.set_password('admin')  # Change this password in production
+            db.session.add(admin)
+    
+    db.session.commit()
 
 client = OpenAI(api_key=api_key)
 
@@ -447,40 +482,6 @@ def handle_response():
             generate_twiml_response(next_line, record_next=True, qid=qid+1),
             mimetype='text/xml'
         )
-
-# Create database and default roles/users if they don't exist
-with app.app_context():
-    db.create_all()
-    
-    # Create default roles if they don't exist
-    roles = {
-        'admin': 'Full access to all features and user management',
-        'manager': 'Access to analytics and basic management features',
-        'user': 'Basic access to core features'
-    }
-    
-    for role_name, description in roles.items():
-        role = Role.query.filter_by(name=role_name).first()
-        if not role:
-            role = Role(name=role_name, description=description)
-            if role_name == 'admin':
-                role.permissions = 'admin,manage_users,sheet_search,questionnaire_bot,analytics'
-            elif role_name == 'manager':
-                role.permissions = 'sheet_search,questionnaire_bot,analytics'
-            else:
-                role.permissions = 'sheet_search,questionnaire_bot'
-            db.session.add(role)
-    
-    # Create admin user if it doesn't exist
-    admin_role = Role.query.filter_by(name='admin').first()
-    if admin_role:
-        admin = User.query.filter_by(username='admin').first()
-        if not admin:
-            admin = User(username='admin', role=admin_role)
-            admin.set_password('admin')  # Change this password in production
-            db.session.add(admin)
-    
-    db.session.commit()
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))

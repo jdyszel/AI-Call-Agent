@@ -7,7 +7,7 @@
     <h1 class="text-center mb-4">AI Tools Dashboard</h1>
     
     <div class="row">
-        {% if current_user.has_permission('sheet_search') %}
+        {% if current_user.has_permission('questionnaire_bot') %}
         <div class="col-md-4 mb-4">
             <div class="card h-100">
                 <div class="card-header">
@@ -15,7 +15,21 @@
                 </div>
                 <div class="card-body">
                     <p class="card-text">Manage and monitor AI-powered call agents for customer service.</p>
-                    <a href="{{ url_for('call_agent') }}" class="btn btn-primary">Go to Call Agent</a>
+                    <a href="{{ url_for('questionnaire_bot') }}" class="btn btn-primary">Go to Call Agent</a>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+        
+        {% if current_user.has_permission('sheet_search') %}
+        <div class="col-md-4 mb-4">
+            <div class="card h-100">
+                <div class="card-header">
+                    <h5 class="card-title">Sheet Search</h5>
+                </div>
+                <div class="card-body">
+                    <p class="card-text">Search and analyze spreadsheet data.</p>
+                    <a href="{{ url_for('sheet_search') }}" class="btn btn-primary">Go to Sheet Search</a>
                 </div>
             </div>
         </div>
