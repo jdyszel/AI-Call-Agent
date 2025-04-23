@@ -37,40 +37,6 @@ login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
 
-# Create database and default roles/users if they don't exist
-with app.app_context():
-    db.create_all()
-    
-    # Create default roles if they don't exist
-    roles = {
-        'admin': 'Full access to all features and user management',
-        'manager': 'Access to analytics and basic management features',
-        'user': 'Basic access to core features'
-    }
-    
-    for role_name, description in roles.items():
-        role = Role.query.filter_by(name=role_name).first()
-        if not role:
-            role = Role(name=role_name, description=description)
-            if role_name == 'admin':
-                role.permissions = 'admin,manage_users,sheet_search,questionnaire_bot,analytics'
-            elif role_name == 'manager':
-                role.permissions = 'sheet_search,questionnaire_bot,analytics'
-            else:
-                role.permissions = 'sheet_search,questionnaire_bot'
-            db.session.add(role)
-    
-    # Create admin user if it doesn't exist
-    admin_role = Role.query.filter_by(name='admin').first()
-    if admin_role:
-        admin = User.query.filter_by(username='admin').first()
-        if not admin:
-            admin = User(username='admin', role=admin_role)
-            admin.set_password('admin')  # Change this password in production
-            db.session.add(admin)
-    
-    db.session.commit()
-
 client = OpenAI(api_key=api_key)
 
 # Conversation storage configuration
@@ -129,6 +95,40 @@ def role_required(role_name):
             return f(*args, **kwargs)
         return decorated_function
     return decorator
+
+# Create database and default roles/users if they don't exist
+with app.app_context():
+    db.create_all()
+    
+    # Create default roles if they don't exist
+    roles = {
+        'admin': 'Full access to all features and user management',
+        'manager': 'Access to analytics and basic management features',
+        'user': 'Basic access to core features'
+    }
+    
+    for role_name, description in roles.items():
+        role = Role.query.filter_by(name=role_name).first()
+        if not role:
+            role = Role(name=role_name, description=description)
+            if role_name == 'admin':
+                role.permissions = 'admin,manage_users,sheet_search,questionnaire_bot,analytics'
+            elif role_name == 'manager':
+                role.permissions = 'sheet_search,questionnaire_bot,analytics'
+            else:
+                role.permissions = 'sheet_search,questionnaire_bot'
+            db.session.add(role)
+    
+    # Create admin user if it doesn't exist
+    admin_role = Role.query.filter_by(name='admin').first()
+    if admin_role:
+        admin = User.query.filter_by(username='admin').first()
+        if not admin:
+            admin = User(username='admin', role=admin_role)
+            admin.set_password('admin')  # Change this password in production
+            db.session.add(admin)
+    
+    db.session.commit()
 
 # Helper functions for call agent
 def save_conversation(call_sid, conversation_data):
