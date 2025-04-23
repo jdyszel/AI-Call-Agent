@@ -11,7 +11,7 @@ import traceback
 openai.api_key = os.getenv("OPENAI_API_KEY")
 app = Flask(__name__)
 
-# Simple in-memory conversation tracker (reset every call)
+# In-memory conversation state
 conversation_log = []
 first_name = ""
 conversation_complete = False
@@ -38,82 +38,76 @@ def handle_response():
             mimetype='text/xml'
         )
 
-    question_id = int(request.args.get("q", 0))
-    recording_url = request.form.get("RecordingUrl") + ".mp3"
-    caller_number = request.form.get("From", "an unknown number")
-    print("Recording URL:", recording_url)
+    qid = int(request.args.get("q", 0))
+    rpt_url = request.form.get("RecordingUrl") + ".mp3"
+    print("Recording URL:", rpt_url)
 
     time.sleep(3)
-
+    transcript = ""
     try:
-        # Step 1: Download audio
-        audio_data = requests.get(recording_url).content
-        with NamedTemporaryFile(suffix=".mp3", delete=False) as temp_audio:
-            temp_audio.write(audio_data)
-            temp_audio.flush()
-        # Step 2: Transcribe using updated OpenAI API
-        with open(temp_audio.name, "rb") as audio_file:
-            transcript_response = openai.Audio.transcribe("whisper-1", audio_file)
-        transcript = transcript_response.get("text", "")
+        # download audio
+        data = requests.get(rpt_url).content
+        # write to temp file
+        with NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+            f.write(data)
+            f.flush()
+            # use new OpenAI v1 transcription API
+            audio_file = open(f.name, "rb")
+            resp = openai.Audio.transcriptions.create(
+                file=audio_file,
+                model="whisper-1"
+            )
+        transcript = resp["text"]
     except Exception as e:
         traceback.print_exc()
-        print("Error during transcription:", str(e))
+        print("Error during transcription:", e)
         return Response(
             '<Response><Say>Sorry, there was a technical issue understanding your answer.</Say><Hangup/></Response>',
             mimetype='text/xml'
         )
 
     print("Transcript:", transcript)
-
-    if question_id == 0:
-        words = transcript.split()
-        first_name = words[1] if words and words[0].lower() in ["my", "i'm", "i"] and len(words) > 1 else (words[0] if words else "there")
+    # record response
+    if qid == 0:
+        parts = transcript.split()
+        first_name = parts[1] if parts and parts[0].lower() in ["my","i'm","i"] and len(parts)>1 else (parts[0] if parts else "there")
         conversation_log.append(f"Full name: {transcript}")
     else:
         conversation_log.append(f"{first_name}: {transcript}")
 
+    # GPT response
     try:
         system_prompt = (
-            f"You are conducting a voice interview. Do not say you are an AI. Address the caller by their first name, {first_name}."
-            f" The caller's number is {caller_number}."
-            " First, confirm the number they are calling from."
-            " Ask if it is their personal cell phone number."
-            " Then confirm whether it is the number they would have registered with."
-            " Ask if they are in our database."
-            " After that, confirm their city and state, age, marital status, and if they have any children at home."
-            " If they do, ask about their children's ages and genders."
-            " Do not repeat questions or loop through the same topics."
-            " Always ask one question at a time."
-            " When the interview is done, say 'Thank you, that's all I need today.' and hang up."
-        )
-        gpt_response = openai.ChatCompletion.create(
+            f"You are an interviewer; do not say you are AI. Call them {first_name}."
+            f" Caller number: {request.form.get('From')}.")
+        messages = [
+            {"role":"system","content":system_prompt},
+            {"role":"user","content":"\n".join(conversation_log)}
+        ]
+        gresp = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": "\n".join(conversation_log)}
-            ]
+            messages=messages
         )
-        next_line = gpt_response.choices[0].message.content.strip()
+        next_line = gresp.choices[0].message.content.strip()
     except Exception as e:
         traceback.print_exc()
-        print("Error during GPT analysis:", str(e))
+        print("Error during GPT analysis:", e)
         return Response(
-            '<Response><Say>Sorry, there was an issue continuing the interview. Please try again later.</Say><Hangup/></Response>',
+            '<Response><Say>Sorry, trouble continuing. Try again later.</Say><Hangup/></Response>',
             mimetype='text/xml'
         )
 
-    print("GPT Next Line:", next_line)
-
+    print("Next:", next_line)
     if "thank you, that's all i need today" in next_line.lower():
         conversation_complete = True
-        twiml = '<Response><Say>' + next_line + '</Say><Hangup/></Response>'
+        twiml = f'<Response><Say>{next_line}</Say><Hangup/></Response>'
     else:
         twiml = (
-            '<Response><Say>' + next_line + '</Say>'
-            + '<Record maxLength="10" action="/handle-response?q=' + str(question_id+1) + '" method="POST" playBeep="false" />'
-            + '</Response>'
+            f'<Response><Say>{next_line}</Say>'
+            f'<Record maxLength="10" action="/handle-response?q={qid+1}" method="POST" playBeep="false" />'
+            '</Response>'
         )
     return Response(twiml, mimetype='text/xml')
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+if __name__=="__main__":
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT",5000)))
