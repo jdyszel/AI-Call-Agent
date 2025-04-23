@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - AI Tools{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1 class="text-center mb-4">AI Tools Dashboard</h1>
+    
+    <div class="row">
+        <div class="col-md-4 mb-4">
+            <div class="card h-100">
+                <div class="card-header">
+                    <h5 class="card-title">AI Call Agent</h5>
+                </div>
+                <div class="card-body">
+                    <p class="card-text">Manage and monitor AI-powered call agents for customer service.</p>
+                    <a href="{{ url_for('call_agent') }}" class="btn btn-primary">Go to Call Agent</a>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4 mb-4">
+            <div class="card h-100">
+                <div class="card-header">
+                    <h5 class="card-title">Analytics</h5>
+                </div>
+                <div class="card-body">
+                    <p class="card-text">View performance metrics and analytics for AI tools.</p>
+                    <a href="{{ url_for('analytics') }}" class="btn btn-primary">View Analytics</a>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4 mb-4">
+            <div class="card h-100">
+                <div class="card-header">
+                    <h5 class="card-title">Settings</h5>
+                </div>
+                <div class="card-body">
+                    <p class="card-text">Configure AI tool settings and preferences.</p>
+                    <a href="{{ url_for('settings') }}" class="btn btn-primary">Manage Settings</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

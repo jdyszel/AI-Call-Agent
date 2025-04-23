@@ -2,3 +2,7 @@ flask
 openai
 requests
 gunicorn
+flask-login
+flask-sqlalchemy
+werkzeug
+python-dotenv
