@@ -7,8 +7,12 @@ from flask import Flask, request, Response
 from tempfile import NamedTemporaryFile
 import traceback
 
-# Initialize OpenAI client using environment variable OPENAI_API_KEY
-client = OpenAI()
+# Initialize OpenAI client using environment variable from Render
+api_key = os.getenv('OPENAI_API_KEY')
+if not api_key:
+    raise ValueError("OPENAI_API_KEY environment variable is not set. Please check your Render environment configuration.")
+
+client = OpenAI(api_key=api_key)
 app = Flask(__name__)
 
 # In-memory conversation state
