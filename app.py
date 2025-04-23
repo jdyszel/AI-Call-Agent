@@ -4,21 +4,39 @@ import time
 from io import BytesIO
 import os
 import shutil
-from flask import Flask, request, Response, session
+from flask import Flask, request, Response, session, render_template, redirect, url_for, flash
 from tempfile import NamedTemporaryFile
 import traceback
 from contextlib import contextmanager
 import json
 from datetime import datetime
+from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
+from flask_sqlalchemy import SQLAlchemy
+from werkzeug.security import generate_password_hash, check_password_hash
+from functools import wraps
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Initialize OpenAI client using environment variable from Render
 api_key = os.getenv('Render')
 if not api_key:
     raise ValueError("Render environment variable (OpenAI API key) is not set. Please check your Render environment configuration.")
 
-client = OpenAI(api_key=api_key)
+# Initialize Flask and its extensions
 app = Flask(__name__)
-app.secret_key = os.getenv('FLASK_SECRET_KEY', os.urandom(24))
+app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', os.urandom(24))
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Initialize extensions
+db = SQLAlchemy(app)
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
+
+client = OpenAI(api_key=api_key)
 
 # Conversation storage configuration
 CONVERSATION_STORAGE_DIR = "conversations"
@@ -33,6 +51,51 @@ TTS_CONFIG = {
     "volume": "default"
 }
 
+# Define roles and their permissions
+class Role(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(50), unique=True, nullable=False)
+    description = db.Column(db.String(200))
+    permissions = db.Column(db.String(500))  # JSON string of permissions
+
+# User model
+class User(UserMixin, db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    password_hash = db.Column(db.String(120), nullable=False)
+    role_id = db.Column(db.Integer, db.ForeignKey('role.id'), nullable=False)
+    role = db.relationship('Role', backref='users')
+    is_active = db.Column(db.Boolean, default=True)
+
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
+
+    def has_permission(self, permission):
+        if not self.role:
+            return False
+        permissions = self.role.permissions.split(',')
+        return permission in permissions
+
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
+
+# Custom decorator for role-based access control
+def role_required(role_name):
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            if not current_user.is_authenticated or current_user.role.name != role_name:
+                flash('You do not have permission to access this page.', 'error')
+                return redirect(url_for('dashboard'))
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
+
+# Helper functions for call agent
 def save_conversation(call_sid, conversation_data):
     """Save conversation data to a file for future reference."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -43,7 +106,6 @@ def save_conversation(call_sid, conversation_data):
 def load_conversation(call_sid):
     """Load conversation data if it exists."""
     try:
-        # Find the most recent conversation file for this call_sid
         files = [f for f in os.listdir(CONVERSATION_STORAGE_DIR) if f.startswith(call_sid)]
         if not files:
             return None
@@ -67,16 +129,14 @@ def safe_temp_file(suffix=None):
             pass
 
 def extract_name_and_preference(transcript):
-    """Extract name and preferred name from transcript with improved logic."""
+    """Extract name and preferred name from transcript."""
     if not transcript:
         return "there", None
     
-    # Clean and split the transcript
     words = transcript.strip().lower().split()
     if not words:
         return "there", None
     
-    # Common introduction patterns with their variations
     intro_patterns = {
         "my name is": 3,
         "i'm": 1,
@@ -95,26 +155,21 @@ def extract_name_and_preference(transcript):
         "i'm known as": 2
     }
     
-    # Check for introduction patterns
     transcript_lower = transcript.lower()
     for pattern, skip in intro_patterns.items():
         if pattern in transcript_lower:
-            # Get the part after the pattern
             parts = transcript_lower.split(pattern, 1)
             if len(parts) > 1:
                 name_parts = parts[1].strip().split()
                 if name_parts:
-                    # Check if there's a preferred name mentioned
                     preferred_name = None
                     if "but" in name_parts or "however" in name_parts:
                         for i, word in enumerate(name_parts):
                             if word in ["but", "however"] and i + 1 < len(name_parts):
                                 preferred_name = name_parts[i + 1]
                                 break
-                    
                     return name_parts[0], preferred_name
     
-    # If no pattern matches, take the first word as name
     return words[0], None
 
 def generate_twiml_response(text, record_next=False, qid=0):
@@ -133,19 +188,122 @@ def generate_twiml_response(text, record_next=False, qid=0):
     twiml += '</Response>'
     return twiml
 
+# Web routes
+@app.route('/')
+def index():
+    if current_user.is_authenticated:
+        return redirect(url_for('dashboard'))
+    return render_template('index.html')
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for('dashboard'))
+    
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        user = User.query.filter_by(username=username).first()
+        
+        if user and user.check_password(password):
+            if not user.is_active:
+                flash('Your account is inactive. Please contact an administrator.')
+                return redirect(url_for('login'))
+            login_user(user)
+            return redirect(url_for('dashboard'))
+        flash('Invalid username or password')
+    return render_template('login.html')
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for('index'))
+
+@app.route('/dashboard')
+@login_required
+def dashboard():
+    return render_template('dashboard.html')
+
+@app.route('/sheet-search')
+@login_required
+def sheet_search():
+    if not current_user.has_permission('sheet_search'):
+        flash('You do not have permission to access this feature.', 'error')
+        return redirect(url_for('dashboard'))
+    return render_template('sheet_search.html')
+
+@app.route('/questionnaire-bot')
+@login_required
+def questionnaire_bot():
+    if not current_user.has_permission('questionnaire_bot'):
+        flash('You do not have permission to access this feature.', 'error')
+        return redirect(url_for('dashboard'))
+    return render_template('questionnaire_bot.html')
+
+# Admin routes
+@app.route('/admin/users')
+@login_required
+@role_required('admin')
+def manage_users():
+    users = User.query.all()
+    roles = Role.query.all()
+    return render_template('admin/users.html', users=users, roles=roles)
+
+@app.route('/admin/user/<int:user_id>', methods=['GET'])
+@login_required
+@role_required('admin')
+def get_user(user_id):
+    user = User.query.get_or_404(user_id)
+    return jsonify({
+        'id': user.id,
+        'username': user.username,
+        'role_id': user.role_id,
+        'is_active': user.is_active
+    })
+
+@app.route('/admin/user/update', methods=['POST'])
+@login_required
+@role_required('admin')
+def update_user():
+    user_id = request.form.get('user_id')
+    user = User.query.get_or_404(user_id)
+    
+    user.username = request.form.get('username')
+    user.role_id = request.form.get('role')
+    db.session.commit()
+    
+    return jsonify({'success': True})
+
+@app.route('/admin/user/<int:user_id>/activate', methods=['POST'])
+@login_required
+@role_required('admin')
+def activate_user(user_id):
+    user = User.query.get_or_404(user_id)
+    user.is_active = True
+    db.session.commit()
+    return jsonify({'success': True})
+
+@app.route('/admin/user/<int:user_id>/deactivate', methods=['POST'])
+@login_required
+@role_required('admin')
+def deactivate_user(user_id):
+    user = User.query.get_or_404(user_id)
+    user.is_active = False
+    db.session.commit()
+    return jsonify({'success': True})
+
+# Call agent routes
 @app.route("/voice", methods=["POST"])
 def voice():
-    # Get call SID for conversation tracking
     call_sid = request.form.get('CallSid', 'unknown')
     
-    # Initialize session data
     session['call_sid'] = call_sid
     session['conversation_log'] = []
     session['first_name'] = ""
     session['preferred_name'] = None
     session['conversation_complete'] = False
     
-    # Try to load previous conversation if it exists
     previous_conversation = load_conversation(call_sid)
     if previous_conversation:
         session['conversation_log'] = previous_conversation.get('conversation_log', [])
@@ -181,17 +339,14 @@ def handle_response():
     recording_url += ".mp3"
     print("Recording URL:", recording_url)
 
-    # Transcribe audio with improved error handling and longer delay
     max_retries = 3
-    retry_delay = 5  # Increased initial delay
+    retry_delay = 5
     last_error = None
     
     for attempt in range(max_retries):
         try:
-            # Add delay before each attempt
             time.sleep(retry_delay)
-            
-            response = requests.get(recording_url, timeout=15)  # Increased timeout
+            response = requests.get(recording_url, timeout=15)
             response.raise_for_status()
             
             with safe_temp_file(suffix=".mp3") as tmp:
@@ -208,7 +363,7 @@ def handle_response():
         except requests.exceptions.RequestException as e:
             last_error = e
             if attempt < max_retries - 1:
-                retry_delay *= 2  # Exponential backoff
+                retry_delay *= 2
                 continue
             print("Error fetching recording:", e)
             return Response(
@@ -231,7 +386,6 @@ def handle_response():
 
     print("Transcript:", transcript)
     
-    # Update session data
     conversation_log = session.get('conversation_log', [])
     
     if qid == 0:
@@ -246,7 +400,6 @@ def handle_response():
     
     session['conversation_log'] = conversation_log
     
-    # Save conversation state
     conversation_data = {
         'call_sid': call_sid,
         'conversation_log': conversation_log,
@@ -256,7 +409,6 @@ def handle_response():
     }
     save_conversation(call_sid, conversation_data)
 
-    # Generate next question or closing with improved error handling
     try:
         system_prompt = (
             f"You are a friendly interviewer. Address the caller by their preferred name ({session.get('preferred_name')}) "
@@ -296,5 +448,39 @@ def handle_response():
             mimetype='text/xml'
         )
 
-if __name__ == "__main__":
+# Create database and default roles/users if they don't exist
+with app.app_context():
+    db.create_all()
+    
+    # Create default roles if they don't exist
+    roles = {
+        'admin': 'Full access to all features and user management',
+        'manager': 'Access to analytics and basic management features',
+        'user': 'Basic access to core features'
+    }
+    
+    for role_name, description in roles.items():
+        role = Role.query.filter_by(name=role_name).first()
+        if not role:
+            role = Role(name=role_name, description=description)
+            if role_name == 'admin':
+                role.permissions = 'admin,manage_users,sheet_search,questionnaire_bot,analytics'
+            elif role_name == 'manager':
+                role.permissions = 'sheet_search,questionnaire_bot,analytics'
+            else:
+                role.permissions = 'sheet_search,questionnaire_bot'
+            db.session.add(role)
+    
+    # Create admin user if it doesn't exist
+    admin_role = Role.query.filter_by(name='admin').first()
+    if admin_role:
+        admin = User.query.filter_by(username='admin').first()
+        if not admin:
+            admin = User(username='admin', role=admin_role)
+            admin.set_password('admin')  # Change this password in production
+            db.session.add(admin)
+    
+    db.session.commit()
+
+if __name__ == '__main__':
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
