@@ -4,7 +4,7 @@ import time
 from io import BytesIO
 import os
 import shutil
-from flask import Flask, request, Response, session, render_template, redirect, url_for, flash
+from flask import Flask, request, Response, session, render_template, redirect, url_for, flash, jsonify
 from tempfile import NamedTemporaryFile
 import traceback
 from contextlib import contextmanager
@@ -15,6 +15,9 @@ from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 from dotenv import load_dotenv
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 # Load environment variables
 load_dotenv()
@@ -482,6 +485,70 @@ def handle_response():
             generate_twiml_response(next_line, record_next=True, qid=qid+1),
             mimetype='text/xml'
         )
+
+@app.route('/api/sheet-search')
+@login_required
+def api_sheet_search():
+    try:
+        # Initialize Google Drive API
+        SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
+        SERVICE_ACCOUNT_FILE = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
+        
+        if not SERVICE_ACCOUNT_FILE:
+            return jsonify({'error': 'Google credentials not configured'}), 500
+            
+        credentials = service_account.Credentials.from_service_account_file(
+            SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+        service = build('drive', 'v3', credentials=credentials)
+        
+        # Search for files containing "(Survey) (Responses)"
+        query = "name contains '(Survey) (Responses)' and mimeType='application/vnd.google-apps.spreadsheet'"
+        results = service.files().list(
+            q=query,
+            fields="files(id, name, createdTime, modifiedTime)",
+            orderBy="createdTime"
+        ).execute()
+        
+        files = results.get('files', [])
+        
+        if not files:
+            return jsonify({
+                'total_sheets': 0,
+                'oldest_created': None,
+                'newest_modified': None,
+                'files': []
+            })
+        
+        # Process files
+        processed_files = []
+        oldest_created = None
+        newest_modified = None
+        
+        for file in files:
+            created_time = datetime.fromisoformat(file['createdTime'].replace('Z', '+00:00'))
+            modified_time = datetime.fromisoformat(file['modifiedTime'].replace('Z', '+00:00'))
+            
+            if oldest_created is None or created_time < oldest_created:
+                oldest_created = created_time
+            if newest_modified is None or modified_time > newest_modified:
+                newest_modified = modified_time
+                
+            processed_files.append({
+                'name': file['name'],
+                'created': created_time.strftime('%Y-%m-%d')
+            })
+        
+        return jsonify({
+            'total_sheets': len(files),
+            'oldest_created': oldest_created.strftime('%Y-%m-%d') if oldest_created else None,
+            'newest_modified': newest_modified.strftime('%Y-%m-%d') if newest_modified else None,
+            'files': processed_files
+        })
+        
+    except HttpError as error:
+        return jsonify({'error': f'Google API error: {str(error)}'}), 500
+    except Exception as e:
+        return jsonify({'error': f'Server error: {str(e)}'}), 500
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))

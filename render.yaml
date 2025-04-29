@@ -10,4 +10,10 @@ services:
       - key: PORT
         value: 10000
       - key: Render
-        sync: false 
+        sync: false
+      - key: FLASK_ENV
+        value: production
+      - key: FLASK_APP
+        value: app.py
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        value: /etc/secrets/service-account.json 
