@@ -33,6 +33,7 @@ app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', os.urandom(24))
 # Use in-memory SQLite for Render deployment
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['FRONTEND_URL'] = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 
 # Initialize extensions
 db = SQLAlchemy(app)
@@ -270,7 +271,7 @@ def sheet_search():
         flash('You do not have permission to access this feature.', 'error')
         return redirect(url_for('dashboard'))
     # Redirect to the React frontend's sheet search page
-    frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+    frontend_url = app.config['FRONTEND_URL']
     return redirect(f'{frontend_url}/sheet-search')
 
 @app.route('/questionnaire-bot')
