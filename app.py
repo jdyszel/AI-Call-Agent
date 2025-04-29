@@ -271,8 +271,7 @@ def sheet_search():
         flash('You do not have permission to access this feature.', 'error')
         return redirect(url_for('dashboard'))
     # Redirect to the React frontend's sheet search page
-    frontend_url = app.config['FRONTEND_URL']
-    return redirect(f'{frontend_url}/sheet-search')
+    return redirect('https://ai-call-agent.onrender.com/sheet-search')
 
 @app.route('/questionnaire-bot')
 @login_required
