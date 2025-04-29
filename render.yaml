@@ -16,4 +16,6 @@ services:
       - key: FLASK_APP
         value: app.py
       - key: GOOGLE_APPLICATION_CREDENTIALS
-        value: /etc/secrets/service-account.json 
+        value: /etc/secrets/service-account.json
+      - key: FRONTEND_URL
+        value: https://ai-call-agent.onrender.com 

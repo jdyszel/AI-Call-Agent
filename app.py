@@ -269,7 +269,9 @@ def sheet_search():
     if not current_user.has_permission('sheet_search'):
         flash('You do not have permission to access this feature.', 'error')
         return redirect(url_for('dashboard'))
-    return render_template('sheet_search.html')
+    # Redirect to the React frontend's sheet search page
+    frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+    return redirect(f'{frontend_url}/sheet-search')
 
 @app.route('/questionnaire-bot')
 @login_required
